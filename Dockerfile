@@ -7,7 +7,6 @@ RUN npm ci
 
 COPY tsconfig.json ./
 COPY src ./src
-COPY scripts ./scripts
 RUN npm run build
 
 FROM node:20-alpine AS runner
@@ -19,7 +18,6 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/data ./data
 
 EXPOSE 3001
 CMD ["npm", "run", "start"]
