@@ -1,7 +1,7 @@
 import vision from '@google-cloud/vision';
 
 const visionClient = new vision.ImageAnnotatorClient({
-  keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
+  keyFilename: '/etc/secrets/googleOcr.json',
 });
 
 export async function ocrImageUrl(imageUrl: string): Promise<string> {

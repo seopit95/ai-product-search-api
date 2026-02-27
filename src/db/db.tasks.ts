@@ -473,9 +473,6 @@ async function enrichWithImageData(points) {
 
 // 포인트 임베딩 생성 후 Qdrant에 저장한다.
 export async function FnInsertPoints() {
-  if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    throw new Error("GOOGLE_APPLICATION_CREDENTIALS가 설정되지 않았습니다.");
-  }
   console.log(`[start] preparing points for collection=${COLLECTION_NAME}`);
   const goodsItems = normalizeGoodsInput(goodsData);
   const sourceData = goodsItems.length
