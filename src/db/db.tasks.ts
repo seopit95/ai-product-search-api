@@ -1,15 +1,15 @@
-// insert-points.ts
+// @ts-nocheck
 
 import dotenv from "dotenv";
 dotenv.config();
-import { qdrant } from "../src/lib/qdrant";
-import { dummyData } from "../src/data/dummyData";
-import { goodsData } from "../src/data/goodsData";
+import { qdrant } from "../lib/qdrant";
+import { dummyData } from "../data/dummyData";
+import { goodsData } from "../data/goodsData";
 import OpenAI from "openai";
-import { buildDocumentText, buildSparseVector } from "../src/lib/search-utils";
+import { buildDocumentText, buildSparseVector } from "../lib/search-utils";
 import { appendFile, mkdir } from "node:fs/promises";
 import path from "node:path";
-import { ocrImageUrl } from "../src/lib/vision-ocr";
+import { ocrImageUrl } from "../lib/vision-ocr";
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -41,6 +41,23 @@ const usageStats = {
     total_tokens: 0,
   },
 };
+
+export async function FnCreateCollection() {
+  const collectionName = process.env.COLLECTION_NAME || "test_products";
+  await qdrant.createCollection(collectionName, {
+    vectors: {
+      dense: {
+        size: 1536,
+        distance: "Cosine",
+      },
+    },
+    sparse_vectors: {
+      sparse: {},
+    },
+  });
+
+  console.log(`컬렉션 생성 완료: ${collectionName}`);
+}
 
 // 토큰 사용량을 단계별로 출력한다.
 function logTokenUsage(stage, usage, extra = {}) {
@@ -78,7 +95,7 @@ function extractJsonFromResponse(response) {
 }
 
 // 상품명 기반으로 대표 성분 효능/추천 대상 정보를 추출한다.
-async function extractNameInsights(productName) {
+async function extractNameInsights(productName: string) {
   if (!productName) {
     return {
       primary_ingredient: "",
@@ -455,7 +472,7 @@ async function enrichWithImageData(points) {
 }
 
 // 포인트 임베딩 생성 후 Qdrant에 저장한다.
-async function insertPoints() {
+export async function FnInsertPoints() {
   if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
     throw new Error("GOOGLE_APPLICATION_CREDENTIALS가 설정되지 않았습니다.");
   }
@@ -512,9 +529,3 @@ async function insertPoints() {
 
   console.log(`포인트 저장 완료: collection=${COLLECTION_NAME}, count=${pointsToUpsert.length}`);
 }
-
-insertPoints().catch((error) => {
-  console.error("[insertPoints failed]", error);
-  if (error?.cause) console.error("[insertPoints failed cause]", error.cause);
-  process.exit(1);
-});
