@@ -5,4 +5,4 @@ dist
 .gitignore
 .idea
 .env
-.env.*
+.env

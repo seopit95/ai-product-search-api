@@ -3,12 +3,10 @@
 import dotenv from "dotenv";
 dotenv.config();
 import { qdrant } from "../lib/qdrant";
-import { dummyData } from "../data/dummyData";
 import { goodsData } from "../data/goodsData";
 import OpenAI from "openai";
-import { buildDocumentText, buildSparseVector } from "../lib/search-utils";
-import { appendFile, mkdir } from "node:fs/promises";
-import path from "node:path";
+import { buildProductDocumentText } from "../lib/search-text";
+import { buildSparseVector } from "../lib/sparse-vector";
 import { ocrImageUrl } from "../lib/vision-ocr";
 
 const client = new OpenAI({
@@ -19,8 +17,6 @@ const COLLECTION_NAME = process.env.COLLECTION_NAME || "test_products";
 const IMAGE_STRUCTURE_MODEL = "gpt-4.1-mini";
 const EMBEDDING_MODEL = "text-embedding-3-small";
 const IMAGE_EXTRACTION_CONCURRENCY = 3;
-const NORMALIZATION_DIR = path.resolve("data");
-const NORMALIZATION_CANDIDATES_FILE = path.join(NORMALIZATION_DIR, "normalization-candidates.jsonl");
 // OpenAI 사용량을 추적한다.
 const usageStats = {
   imageStructure: {
@@ -337,52 +333,6 @@ function normalizeGoodsInput(input) {
   return [];
 }
 
-// 인서트 시 브랜드/카테고리 후보를 수집한다.
-async function collectNormalizationCandidates(points) {
-  const seen = new Set();
-  const lines = [];
-  const ts = new Date().toISOString();
-
-  points.forEach((point) => {
-    const payload = point?.payload || {};
-    const brand = typeof payload.brand === "string" ? payload.brand.trim() : "";
-    const category = typeof payload.category === "string" ? payload.category.trim() : "";
-
-    if (brand) {
-      const key = `brand:${brand}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        lines.push(JSON.stringify({
-          type: "brand",
-          value: brand,
-          source: "insertPoints",
-          product_id: point?.id ?? null,
-          ts,
-        }));
-      }
-    }
-
-    if (category) {
-      const key = `category:${category}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        lines.push(JSON.stringify({
-          type: "category",
-          value: category,
-          source: "insertPoints",
-          product_id: point?.id ?? null,
-          ts,
-        }));
-      }
-    }
-  });
-
-  if (!lines.length) return;
-  await mkdir(NORMALIZATION_DIR, { recursive: true });
-  await appendFile(NORMALIZATION_CANDIDATES_FILE, `${lines.join("\n")}\n`, "utf8");
-  console.log(`[normalization] candidates appended: ${lines.length}`);
-}
-
 // 상품명 기반 인사이트를 payload에 추가한다.
 async function enrichWithNameInsights(points) {
   return mapWithConcurrency(points, IMAGE_EXTRACTION_CONCURRENCY, async (point) => {
@@ -475,16 +425,17 @@ async function enrichWithImageData(points) {
 export async function FnInsertPoints() {
   console.log(`[start] preparing points for collection=${COLLECTION_NAME}`);
   const goodsItems = normalizeGoodsInput(goodsData);
-  const sourceData = goodsItems.length
-    ? goodsItems.map(mapGoodsToPoint)
-    : dummyData;
+  if (!goodsItems.length) {
+    console.log("[skip] no goodsData items");
+    return;
+  }
+  const sourceData = goodsItems.map(mapGoodsToPoint);
 
-  await collectNormalizationCandidates(sourceData);
   const withNameInsights = await enrichWithNameInsights(sourceData);
   const sourcePoints = await enrichWithImageData(withNameInsights);
 
   const texts = sourcePoints.map((item) => {
-    const baseText = buildDocumentText(item);
+    const baseText = buildProductDocumentText(item);
     return baseText;
   });
 

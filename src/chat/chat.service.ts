@@ -2,12 +2,8 @@ import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import OpenAI from 'openai';
 import { qdrant } from '../lib/qdrant';
 import { chatPolicy } from '../config/chat-policy';
-import {
-  buildQueryText,
-  buildSparseVector,
-  normalizeBrand,
-  normalizeCategory,
-} from '../lib/search-utils';
+import { buildChatQueryText, SearchFilters } from '../lib/search-text';
+import { buildSparseVector } from '../lib/sparse-vector';
 
 type SessionState = {
   history: Array<{ role: string; content: string; ts: string }>;
@@ -18,7 +14,7 @@ type SessionState = {
 
 type AnalyzeResult = {
   semantic_query: string;
-  filters: {
+  filters: SearchFilters & {
     max_price: number | null;
     min_price: number | null;
     brand: string | null;
@@ -263,14 +259,10 @@ JSON 외의 말은 절대 출력하지 마라.
 
         const cautionKeywords = this.FnExtractCautionKeywords(combined);
         const { content: analyzed } = await this.FnAnalyzeQuery(combined);
-        const filters = {
-          ...analyzed.filters,
-          brand: normalizeBrand(analyzed.filters?.brand),
-          category: normalizeCategory(analyzed.filters?.category),
-        };
+        const filters = { ...analyzed.filters };
 
-        const queryText = buildQueryText({
-          semantic_query: analyzed.semantic_query,
+        const queryText = buildChatQueryText({
+          semanticQuery: analyzed.semantic_query,
           filters,
           userMessage: combined,
         });

@@ -1,11 +1,9 @@
 import { QdrantClient } from '@qdrant/js-client-rest';
 import * as dotenv from 'dotenv';
+import { normalizeQdrantUrl } from './qdrant-url';
 
 dotenv.config();
 
-const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl) {
-  throw new Error('DATABASE_URL is not set. Check your .env file.');
-}
+const qdrantUrl = normalizeQdrantUrl(process.env.QDRANT_URL ?? process.env.DATABASE_URL);
 
-export const qdrant = new QdrantClient({ url: databaseUrl });
+export const qdrant = new QdrantClient({ url: qdrantUrl });
