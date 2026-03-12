@@ -12,7 +12,6 @@ export class ChatController {
 
   @Post('chat')
   async chat(@Body() body: ChatRequestBody) {
-    console.log(body)
     return this.chatService.FnHandleChat(body);
   }
 }

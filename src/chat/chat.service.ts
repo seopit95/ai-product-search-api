@@ -1,15 +1,12 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import OpenAI from 'openai';
 import { qdrant } from '../lib/qdrant';
-import { chatPolicy } from '../config/chat-policy';
 import { buildChatQueryText, SearchFilters } from '../lib/search-text';
 import { buildSparseVector } from '../lib/sparse-vector';
 
 type SessionState = {
   history: Array<{ role: string; content: string; ts: string }>;
   lastResults: any[];
-  needStage: number;
-  pendingNeedMessage: string;
 };
 
 type AnalyzeResult = {
@@ -38,8 +35,6 @@ export class ChatService {
       this.sessionStore.set(sessionId, {
         history: [],
         lastResults: [],
-        needStage: 0,
-        pendingNeedMessage: '',
       });
     }
     return this.sessionStore.get(sessionId) || null;
@@ -51,64 +46,6 @@ export class ChatService {
     if (session.history.length > 20) {
       session.history = session.history.slice(-20);
     }
-  }
-
-  private FnIsProductSearchMessage(message: string): boolean {
-    const text = String(message || '').toLowerCase();
-    return chatPolicy.intent.productSearchKeywords.some((k) => text.includes(k));
-  }
-
-  private FnIsFollowupEffectQuestion(message: string): boolean {
-    const text = String(message || '').toLowerCase();
-    return chatPolicy.intent.followupKeywords.some((k) => text.includes(k));
-  }
-
-  private FnBuildNeedQuestion(stage: number): string {
-    if (stage === 1) return chatPolicy.questions.needStage1;
-    return chatPolicy.questions.needStage2;
-  }
-
-  private FnIsNegativeAnswer(text: string): boolean {
-    const raw = String(text || '').toLowerCase().trim();
-    return chatPolicy.intent.negativeAnswers.some((v) => raw === v || raw.includes(v));
-  }
-
-  private FnHasNeedKeywords(text: string): boolean {
-    const raw = String(text || '').toLowerCase();
-    return chatPolicy.intent.needKeywords.some((k) => raw.includes(k));
-  }
-
-  private FnExtractCautionKeywords(text: string): string[] {
-    const raw = String(text || '').toLowerCase();
-    return chatPolicy.caution.keywords.filter((k) => raw.includes(k));
-  }
-
-  private FnIsHighRiskForProduct(payload: any, cautionKeywords: string[]): boolean {
-    if (!cautionKeywords?.length) return false;
-    const list = Array.isArray(payload?.not_recommended_for) ? payload.not_recommended_for : [];
-    if (!list.length) return false;
-    const text = list.join(' ').toLowerCase();
-    return cautionKeywords.some((k) => text.includes(k));
-  }
-
-  private FnBuildNoRecommendationMessage(cautionKeywords: string[]): string {
-    const hasPregnancy = cautionKeywords.some((k) => ['임신', '임산부'].includes(k));
-    const hasBreastfeeding = cautionKeywords.some((k) => ['수유', '수유부'].includes(k));
-    const hasChild = cautionKeywords.some((k) => ['어린이', '소아', '청소년'].includes(k));
-
-    if (hasPregnancy) return chatPolicy.caution.messages.pregnancy;
-    if (hasBreastfeeding) return chatPolicy.caution.messages.breastfeeding;
-    if (hasChild) return chatPolicy.caution.messages.child;
-    return chatPolicy.caution.messages.default;
-  }
-
-  private FnFindReferencedProduct(message: string, results: any[]): any | null {
-    const text = String(message || '').toLowerCase();
-    for (const item of results) {
-      const name = String(item?.payload?.name || '').toLowerCase();
-      if (name && text.includes(name)) return item;
-    }
-    return results[0] || null;
   }
 
   private async FnAnalyzeQuery(userMessage: string): Promise<{ content: AnalyzeResult; usage: unknown }> {
@@ -239,130 +176,54 @@ JSON 외의 말은 절대 출력하지 마라.
 
   async FnHandleChat(body: { message?: string; sessionId?: string }) {
     try {
-      const message = String(body?.message || '');
+      const message = String(body?.message || '').trim();
       const session = this.FnGetSession(body?.sessionId);
       this.FnPushHistory(session, 'user', message);
-
-      if (session?.needStage === 1) {
-        if (this.FnIsNegativeAnswer(message)) {
-          return { mode: 'answer', text: chatPolicy.responses.needOnlyPrompt };
-        }
-        session.pendingNeedMessage = message;
-        session.needStage = 2;
-        return { mode: 'answer', text: this.FnBuildNeedQuestion(2) };
+      if (!message) {
+        return { mode: 'answer', text: '질문을 입력해주세요.' };
       }
 
-      if (session?.needStage === 2) {
-        const combined = [session.pendingNeedMessage, message].filter(Boolean).join('\n');
-        session.needStage = 0;
-        session.pendingNeedMessage = '';
+      const { content: analyzed } = await this.FnAnalyzeQuery(message);
+      const filters = { ...analyzed.filters };
 
-        const cautionKeywords = this.FnExtractCautionKeywords(combined);
-        const { content: analyzed } = await this.FnAnalyzeQuery(combined);
-        const filters = { ...analyzed.filters };
+      const queryText = buildChatQueryText({
+        semanticQuery: analyzed.semantic_query,
+        filters,
+        userMessage: message,
+      });
 
-        const queryText = buildChatQueryText({
-          semanticQuery: analyzed.semantic_query,
-          filters,
-          userMessage: combined,
-        });
+      const embedding = await this.client.embeddings.create({
+        model: 'text-embedding-3-small',
+        input: queryText,
+      });
 
-        const embedding = await this.client.embeddings.create({
-          model: 'text-embedding-3-small',
-          input: queryText,
-        });
+      const sparseVector = buildSparseVector(queryText);
+      const result = await this.FnSearchQdrant({
+        denseVector: embedding.data[0].embedding,
+        sparseVector,
+        filters,
+      });
 
-        const sparseVector = buildSparseVector(queryText);
-        const result = await this.FnSearchQdrant({
-          denseVector: embedding.data[0].embedding,
-          sparseVector,
-          filters,
-        });
-
-        if (!result.length) {
+      if (!result.length) {
+        if (session) {
           session.lastResults = [];
-          return { mode: 'answer', text: chatPolicy.responses.noResults };
         }
-
-        const safeResults = result.filter((item: any) => !this.FnIsHighRiskForProduct(item?.payload, cautionKeywords));
-        if (!safeResults.length) {
-          session.lastResults = [];
-          const text = cautionKeywords.length
-            ? this.FnBuildNoRecommendationMessage(cautionKeywords)
-            : chatPolicy.responses.noResults;
-          return { mode: 'answer', text };
-        }
-
-        session.lastResults = safeResults;
-        this.FnPushHistory(session, 'assistant', `검색 결과 ${safeResults.length}건`);
         return {
-          analyzed,
-          result: safeResults,
-          usage: embedding.usage,
+          mode: 'answer',
+          text: '조건에 맞는 상품을 찾지 못했어요. 질문을 조금 바꿔서 다시 알려주세요.',
         };
       }
 
-      const hasLastResults = (session?.lastResults?.length || 0) > 0;
-      const isProductIntent = this.FnIsProductSearchMessage(message);
-      const isFollowup = this.FnIsFollowupEffectQuestion(message);
-
-      if (!isProductIntent || isFollowup) {
-        if (isFollowup && hasLastResults) {
-          const target = this.FnFindReferencedProduct(message, session?.lastResults || []);
-          if (!target) {
-            return { mode: 'answer', text: chatPolicy.responses.askProductName };
-          }
-
-          const payload = target.payload || {};
-          const secondary = Array.isArray(payload.secondary_benefits) ? payload.secondary_benefits : [];
-          const recommended = Array.isArray(payload.recommended_for) ? payload.recommended_for : [];
-
-          const lines = [`"${payload.name || '이 상품'}" 기준으로 추가 효능과 추천 대상 정보를 정리해드릴게요.`];
-          if (secondary.length) {
-            lines.push(`부수 효능: ${secondary.slice(0, 5).join(', ')}`);
-          } else {
-            lines.push('부수 효능 정보는 아직 부족해요.');
-          }
-          if (recommended.length) {
-            lines.push(`추천 대상: ${recommended.slice(0, 5).join(', ')}`);
-          } else {
-            lines.push('추천 대상 정보는 아직 부족해요.');
-          }
-
-          const answerText = lines.join('\n');
-          this.FnPushHistory(session, 'assistant', answerText);
-          return { mode: 'answer', text: answerText };
-        }
-
-        if (isFollowup && !hasLastResults && isProductIntent) {
-          if (session) {
-            session.needStage = 1;
-            session.pendingNeedMessage = message;
-          }
-          return { mode: 'answer', text: this.FnBuildNeedQuestion(1) };
-        }
-
-        if (isFollowup && !hasLastResults) {
-          return { mode: 'answer', text: chatPolicy.responses.needMissing };
-        }
-
-        return { mode: 'answer', text: chatPolicy.responses.recommendPrompt };
+      if (session) {
+        session.lastResults = result;
       }
+      this.FnPushHistory(session, 'assistant', `검색 결과 ${result.length}건`);
 
-      if (this.FnIsProductSearchMessage(message)) {
-        if (session) {
-          if (this.FnHasNeedKeywords(message)) {
-            session.needStage = 2;
-            session.pendingNeedMessage = message;
-            return { mode: 'answer', text: this.FnBuildNeedQuestion(2) };
-          }
-          session.needStage = 1;
-          session.pendingNeedMessage = message;
-        }
-        return { mode: 'answer', text: this.FnBuildNeedQuestion(1) };
-      }
-
-      return { mode: 'answer', text: chatPolicy.responses.recommendPrompt };
+      return {
+        analyzed,
+        result,
+        usage: embedding.usage,
+      };
     } catch (error) {
       console.error(error);
       throw new InternalServerErrorException('검색 실패');
