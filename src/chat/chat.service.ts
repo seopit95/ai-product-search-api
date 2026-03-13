@@ -149,6 +149,28 @@ export class ChatService {
     }
   }
 
+  // gpt-5-mini는 커스텀 temperature를 받지 않으므로 호출 옵션에서 제외한다.
+  private FnBuildChatCompletionOptions(params: {
+    model: string;
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
+    temperature?: number;
+  }) {
+    const options: {
+      model: string;
+      messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
+      temperature?: number;
+    } = {
+      model: params.model,
+      messages: params.messages,
+    };
+
+    if (typeof params.temperature === 'number' && params.model !== 'gpt-5-mini') {
+      options.temperature = params.temperature;
+    }
+
+    return options;
+  }
+
   // 상담 메모에는 중복된 키워드가 많아지기 쉬워서 여기서 한 번 정리한다.
   private FnUnique(values: string[]): string[] {
     return Array.from(new Set(values.map((item) => String(item || '').trim()).filter(Boolean)));
@@ -226,14 +248,14 @@ export class ChatService {
       remainingQuestions,
     });
 
-    const response = await this.client.chat.completions.create({
-      model: 'gpt-4.1-mini',
+    const response = await this.client.chat.completions.create(this.FnBuildChatCompletionOptions({
+      model: 'gpt-5-mini',
       messages: [
         { role: 'system', content: '너는 영양제 전문 상담사다.' },
         { role: 'user', content: prompt },
       ],
       temperature: 0,
-    });
+    }));
 
     const raw = response.choices[0]?.message?.content || '{}';
     return {
@@ -353,14 +375,14 @@ export class ChatService {
       candidates: params.candidates,
     });
 
-    const response = await this.client.chat.completions.create({
-      model: 'gpt-4.1-mini',
+    const response = await this.client.chat.completions.create(this.FnBuildChatCompletionOptions({
+      model: 'gpt-5-mini',
       messages: [
         { role: 'system', content: '너는 영양제 추천 결과 검수자다.' },
         { role: 'user', content: prompt },
       ],
       temperature: 0,
-    });
+    }));
 
     const raw = response.choices[0]?.message?.content || '{}';
     const parsed = this.FnParseJsonText(raw) as RecommendationSelection;
@@ -398,14 +420,14 @@ export class ChatService {
       products: params.products,
     });
 
-    const response = await this.client.chat.completions.create({
-      model: 'gpt-4.1-mini',
+    const response = await this.client.chat.completions.create(this.FnBuildChatCompletionOptions({
+      model: 'gpt-5-mini',
       messages: [
         { role: 'system', content: '너는 영양제 전문 상담사다.' },
         { role: 'user', content: prompt },
       ],
       temperature: 0.3,
-    });
+    }));
 
     return String(response.choices[0]?.message?.content || '').trim()
       || '지금까지 말씀해주신 내용을 종합해서 먼저 볼 만한 제품을 추렸어요.';
