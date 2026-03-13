@@ -8,7 +8,8 @@
     "start": "node dist/main.js",
     "start:dev": "ts-node --transpile-only src/lib/main.ts",
     "create:collection": "ts-node --transpile-only src/db/create-collection.cli.ts",
-    "insert:points": "ts-node --transpile-only src/db/insert-points.cli.ts"
+    "insert:points": "ts-node --transpile-only src/db/insert-points.cli.ts",
+    "import:goods-data": "ts-node --transpile-only src/data/goodsData-import.cli.ts --out src/data/goodsData.ts"
   },
   "dependencies": {
     "@google-cloud/vision": "^5.3.4",
