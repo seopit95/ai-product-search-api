@@ -6,6 +6,7 @@ import { qdrant } from "../lib/qdrant";
 import { goodsData } from "../data/goodsData";
 import OpenAI from "openai";
 import { buildProductDocumentText } from "../lib/search-text";
+import { FnExtractImageUrlsFromRichTextHtml, FnNormalizeRichTextHtml } from "../lib/rich-text-html";
 import { buildSparseVector } from "../lib/sparse-vector";
 import { ocrImageUrl } from "../lib/vision-ocr";
 
@@ -14,7 +15,7 @@ const client = new OpenAI({
 });
 
 const COLLECTION_NAME = process.env.COLLECTION_NAME || "test_products";
-const IMAGE_STRUCTURE_MODEL = "gpt-4.1-mini";
+const IMAGE_STRUCTURE_MODEL = "gpt-5-mini";
 const EMBEDDING_MODEL = "text-embedding-3-small";
 const IMAGE_EXTRACTION_CONCURRENCY = 3;
 // OpenAI 사용량을 추적한다.
@@ -282,22 +283,11 @@ async function mapWithConcurrency(items, concurrency, task) {
   return out;
 }
 
-// HTML에서 img src URL 목록을 추출한다.
-function extractImageUrlsFromHtml(html) {
-  if (!html) return [];
-  const urls = [];
-  const regex = /<img[^>]+src=["']([^"']+)["'][^>]*>/gi;
-  let match;
-  while ((match = regex.exec(html)) !== null) {
-    if (match[1]) urls.push(match[1]);
-  }
-  return urls;
-}
-
 // HTML 태그를 제거하고 텍스트만 남긴다.
 function stripHtml(html) {
-  if (!html) return "";
-  return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const normalizedHtml = FnNormalizeRichTextHtml(html);
+  if (!normalizedHtml) return "";
+  return normalizedHtml.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 }
 
 // goodsData 형태를 insertPoints 포맷으로 변환한다.
@@ -310,7 +300,7 @@ function mapGoodsToPoint(goods) {
     ? Number(goods.goodsPrice)
     : null;
   const descriptionHtml = goods?.goodsDescription || "";
-  const detailImages = extractImageUrlsFromHtml(descriptionHtml);
+  const detailImages = FnExtractImageUrlsFromRichTextHtml(descriptionHtml);
   return {
     id,
     payload: {
